@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/krlsdgzmn/learn-go/5_projectStructuring/internal/app"
-	"github.com/krlsdgzmn/learn-go/5_projectStructuring/routes"
+	"github.com/krlsdgzmn/learn-go/5_projectStructuring/internal/routes"
 )
 
 func main() {
