@@ -9,6 +9,7 @@ import (
 
 	"github.com/krlsdgzmn/learn-go/5_projectStructuring/internal/api"
 	"github.com/krlsdgzmn/learn-go/5_projectStructuring/internal/store"
+	"github.com/krlsdgzmn/learn-go/5_projectStructuring/migrations"
 )
 
 type Application struct {
@@ -21,6 +22,11 @@ func NewApplication() (*Application, error) {
 	db, err := store.Open()
 	if err != nil {
 		return nil, err
+	}
+
+	err = store.MigrateFS(db, migrations.FS, ".")
+	if err != nil {
+		panic(err)
 	}
 
 	logger := log.New(os.Stdout, "", log.Ldate|log.Ltime)
