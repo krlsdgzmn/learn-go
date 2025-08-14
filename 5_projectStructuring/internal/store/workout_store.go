@@ -15,7 +15,7 @@ type Workout struct {
 
 type WorkoutEntry struct {
 	Id              int     `json:"id"`
-	ExerciseName    string  `json:"excercise_name"`
+	ExerciseName    string  `json:"exercise_name"`
 	Sets            int     `json:"sets"`
 	Reps            *int    `json:"reps"`
 	DurationSeconds *int    `json:"duration_seconds"`
