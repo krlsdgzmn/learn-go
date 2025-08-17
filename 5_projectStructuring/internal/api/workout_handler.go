@@ -1,8 +1,11 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -12,28 +15,13 @@ import (
 
 type WorkoutHandler struct {
 	workoutStore store.WorkoutStore
+	logger       *log.Logger
 }
 
 func NewWorkoutHandler(workoutStore store.WorkoutStore) *WorkoutHandler {
 	return &WorkoutHandler{
 		workoutStore: workoutStore,
 	}
-}
-
-func (wh *WorkoutHandler) HandleGetWorkoutById(w http.ResponseWriter, r *http.Request) {
-	paramsWorkoutId := chi.URLParam(r, "workoutId")
-	if paramsWorkoutId == "" {
-		http.NotFound(w, r)
-		return
-	}
-
-	workoutId, err := strconv.ParseInt(paramsWorkoutId, 10, 64)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
-
-	fmt.Fprintf(w, "Workout Id: %d\n", workoutId)
 }
 
 func (wh *WorkoutHandler) HandleCreateWorkout(w http.ResponseWriter, r *http.Request) {
@@ -54,5 +42,116 @@ func (wh *WorkoutHandler) HandleCreateWorkout(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(createdWorkout)
-	fmt.Fprintf(w, "Successfully created a workout.\n")
+}
+
+func (wh *WorkoutHandler) HandleGetWorkoutById(w http.ResponseWriter, r *http.Request) {
+	paramsWorkoutId := chi.URLParam(r, "workoutId")
+	if paramsWorkoutId == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	workoutId, err := strconv.ParseInt(paramsWorkoutId, 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	workoutById, err := wh.workoutStore.GetWorkoutById(workoutId)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(w, "Failed to retrieve a workout.\n", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(workoutById)
+}
+
+func (wh *WorkoutHandler) HandleUpdateWorkoutById(w http.ResponseWriter, r *http.Request) {
+
+	paramsWorkoutId := chi.URLParam(r, "workoutId")
+	if paramsWorkoutId == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	workoutId, err := strconv.ParseInt(paramsWorkoutId, 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+
+	workout, err := wh.workoutStore.GetWorkoutById(workoutId)
+	if err != nil {
+		http.Error(w, "Failed to fetch workout.", http.StatusInternalServerError)
+		return
+	}
+
+	if workout == nil {
+		http.NotFound(w, r)
+		return
+	}
+	var updateWorkoutRequest struct {
+		Title           *string              `json:"title"`
+		Description     *string              `json:"description"`
+		DurationMinutes *int                 `json:"duration_minutes"`
+		CaloriesBurned  *int                 `json:"calories_burned"`
+		Entries         []store.WorkoutEntry `json:"entries"`
+	}
+
+	err = json.NewDecoder(r.Body).Decode(&updateWorkoutRequest)
+	if err != nil {
+		wh.logger.Printf("ERROR: decodingUpdateRequest: %v", err)
+		utils.WriteJSON(w, http.StatusBadRequest, utils.Envelope{"error": "invalid request payload"})
+		return
+	}
+
+	if updateWorkoutRequest.Title != nil {
+		existingWorkout.Title = *updateWorkoutRequest.Title
+	}
+	if updateWorkoutRequest.Description != nil {
+		existingWorkout.Description = *updateWorkoutRequest.Description
+	}
+	if updateWorkoutRequest.DurationMinutes != nil {
+		existingWorkout.DurationMinutes = *updateWorkoutRequest.DurationMinutes
+	}
+	if updateWorkoutRequest.CaloriesBurned != nil {
+		existingWorkout.CaloriesBurned = *updateWorkoutRequest.CaloriesBurned
+	}
+	if updateWorkoutRequest.Entries != nil {
+		existingWorkout.Entries = updateWorkoutRequest.Entries
+	}
+
+	currentUser := middleware.GetUser(r)
+	if currentUser == nil || currentUser == store.AnonymousUser {
+		utils.WriteJSON(w, http.StatusBadRequest, utils.Envelope{"error": "you must be logged in to update"})
+		return
+	}
+
+	workoutOwner, err := wh.workoutStore.GetWorkoutOwner(workoutID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			utils.WriteJSON(w, http.StatusNotFound, utils.Envelope{"error": "workout does not exist"})
+			return
+		}
+
+		utils.WriteJSON(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	if workoutOwner != currentUser.ID {
+		utils.WriteJSON(w, http.StatusForbidden, utils.Envelope{"error": "you are not authorized to update this workout"})
+		return
+	}
+
+	err = wh.workoutStore.UpdateWorkout(existingWorkout)
+	if err != nil {
+		wh.logger.Printf("ERROR: updatingWorkout: %v", err)
+		utils.WriteJSON(w, http.StatusInternalServerError, utils.Envelope{"error": "internal server error"})
+		return
+	}
+
+	utils.WriteJSON(w, http.StatusOK, utils.Envelope{"workout": existingWorkout})
 }

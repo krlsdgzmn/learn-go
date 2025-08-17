@@ -35,6 +35,7 @@ func NewPostgresWorkoutStore(db *sql.DB) *PostgresWorkoutStore {
 type WorkoutStore interface {
 	GetWorkoutById(workoutId int64) (*Workout, error)
 	CreateWorkout(workout *Workout) (*Workout, error)
+	UpdateWorkout(workout *Workout) error
 }
 
 func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error) {
@@ -73,18 +74,109 @@ func (pg *PostgresWorkoutStore) CreateWorkout(workout *Workout) (*Workout, error
 
 func (pg *PostgresWorkoutStore) GetWorkoutById(workoutId int64) (*Workout, error) {
 	workout := &Workout{}
-	return workout, nil
+	query := `
+	SELECT id, title, description, duration_minutes, calories_burned
+	FROM workouts 
+	WHERE id = $1
+	`
+	err := pg.db.QueryRow(query, workoutId).Scan(&workout.Id, &workout.Title, &workout.Description, &workout.DurationMinutes, &workout.CaloriesBurned)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
 
-	// tx, err := pg.db.Begin()
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// defer tx.Rollback()
-	//
-	// query := `SELECT * FROM workout WHERE id = $1`
-	// rows, err := tx.Query(query, workoutId)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	//
+	if err != nil {
+		return nil, err
+	}
+
+	entryQuery := `
+	SELECT id, exercise_name, sets, reps, duration_seconds, weight, notes, order_index
+	FROM workout_entries 
+	WHERE id = $1
+	ORDER BY order_index`
+
+	rows, err := pg.db.Query(entryQuery, workoutId)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var entry WorkoutEntry
+		err = rows.Scan(
+			&entry.Id,
+			&entry.ExerciseName,
+			&entry.Sets,
+			&entry.Reps,
+			&entry.DurationSeconds,
+			&entry.Weight,
+			&entry.Notes,
+			&entry.OrderIndex,
+		)
+
+		if err != nil {
+			return nil, err
+		}
+		workout.Entries = append(workout.Entries, entry)
+	}
+
+	return workout, nil
+}
+func (pg *PostgresWorkoutStore) UpdateWorkout(workout *Workout) error {
+	tx, err := pg.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	query := `
+	UPDATE workouts
+	SET title = $1, description = $2, duration_minutes = $3, calories_burned = $4
+	WHERE id = $5
+	`
+
+	res, err := tx.Exec(query, workout.Title, workout.Description, workout.DurationMinutes, workout.CaloriesBurned, workout.Id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := res.RowsAffected()
+
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+
+	_, err = tx.Exec(`
+		DELETE FROM 
+		workout_entries 
+		WHERE workout_id = $1`, workout.Id)
+	if err != nil {
+		return err
+	}
+	for _, entry := range workout.Entries {
+		query := `
+		INSERT INTO workout_entries (workout_id, exercise_name, sets, reps, duration_seconds, weight, notes, order_index)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`
+
+		_, err := tx.Exec(query,
+			workout.Id,
+			entry.ExerciseName,
+			entry.Sets,
+			entry.Reps,
+			entry.DurationSeconds,
+			entry.Weight,
+			entry.Notes,
+			entry.OrderIndex,
+		)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
 }
